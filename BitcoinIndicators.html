@@ -1,0 +1,362 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<script type="text/javascript" src="https://canvasjs.com/assets/script/jquery-1.11.1.min.js"></script>
+<script type="text/javascript" src="https://canvasjs.com/assets/script/canvasjs.stock.min.js"></script>
+<style>
+  table, th, td {
+    border: 1px solid black;
+    border-collapse: collapse;
+  }
+</style>
+<script type="text/javascript">
+window.onload = function () {
+ var price = [], volume = [], close = [], halvingCycleRisk = [];
+ var output = "For informational purpose only."
+  
+  var stockChart = new CanvasJS.StockChart("chartContainer",{ 
+
+    theme: "light2",
+    //backgroundColor: "black", //Change it to "red"
+    charts: [
+      {
+        height: "40%",
+        axisY: {
+          prefix: "$",
+          title: "Price"
+        },
+        legend: {
+          cursor: "pointer",
+          verticalAlign: "bottom",
+          itemclick: function (e) {
+            if (typeof (e.dataSeries.visible) === "undefined" || e.dataSeries.visible) {
+              e.dataSeries.visible = false;
+            } else {
+              e.dataSeries.visible = true;
+            }
+            e.chart.render();
+          }
+        },
+        data: [{
+          type: "candlestick",
+          yValueFormatString: "$#,###.##",
+          dataPoints : price
+        }]
+      },
+      {
+        height: "20%",
+        axisY: {
+          prefix: "",
+          title: "Demand"
+        }
+      },
+      {
+        height: "20%",
+        axisY: {
+          prefix: "",
+          title: "%",
+          minimum: 0
+        }
+      },
+      {
+        height: "20%",
+        axisY: {
+          prefix: "",
+          title: "Volume"
+        },
+        data: [{
+          dataPoints : volume
+        }]
+      }
+    ],
+    rangeSelector: {
+       enabled: false
+     },
+    navigator: {
+      height: "50%",
+      data: [{
+        dataPoints: close
+      }],
+      slider: {
+        minimum: (new Date()).setMonth((new Date()).getMonth()-3),
+        maximum: new Date()
+      }
+    }
+  }); 
+
+  //--------------
+  //JS FUNCTIONS
+  //--------------
+
+  function precise(x) {
+    return Number.parseFloat(x).toPrecision(4);
+  }
+
+  function calculateSMA(dps, count){
+    var avg = function(dps){
+      var sum = 0, count = 0, val;
+      for (var i = 0; i < dps.length; i++) {
+        val = dps[i].y[3]; sum += val; count++;
+      }
+      return sum / count;
+    };
+    var result = [], val;
+    count = count || 5;
+    for (var i=0; i < count; i++)
+      result.push({ x: dps[i].x , y: null});
+    for (var i=count - 1, len=dps.length; i < len; i++){
+      val = avg(dps.slice(i - count + 1, i));
+      if (isNaN(val))
+        result.push({ x: dps[i].x, y: null});
+      else
+        result.push({ x: dps[i].x, y: val});
+    }
+    return result;
+  };
+
+  function calculate2SMA(dps, count){
+    var avg = function(dps){
+      var sum = 0, count = 0, val;
+      for (var i = 0; i < dps.length; i++) {
+        val = dps[i].y[3]; sum += val; count++;
+      }
+      return (sum / count)*2;
+    };
+    var result = [], val;
+    count = count || 5;
+    for (var i=0; i < count; i++)
+      result.push({ x: dps[i].x, y: null});
+    for (var i=count - 1, len=dps.length; i < len; i++){
+      val = avg(dps.slice(i - count + 1, i));
+      if (isNaN(val))
+        result.push({ x: dps[i].x, y: null});
+      else
+        result.push({ x: dps[i].x, y: val});
+    }
+    return result;
+  };
+
+
+  function calculateEMA(dps,count) {
+    var k = 2/(count + 1);
+    var emaDps = [{x: dps[0].x, y: dps[0].y.length ? dps[0].y[3] : dps[0].y}];
+    for (var i = 1; i < dps.length; i++) {
+      emaDps.push({x: dps[i].x, y: (dps[i].y.length ? dps[i].y[3] : dps[i].y) * k + emaDps[i - 1].y * (1 - k)});
+    }
+    return emaDps;
+  };
+
+
+  function PiCycle(dps) {
+    var ma2x350 = calculate2SMA(dps, 350);
+    var ma111 = calculateSMA(dps, 111);
+
+    var piDps = [];
+
+    for(var i = 0; i < dps.length; i++){
+      piDps.push({x: dps[i].x, y: (1-(ma2x350[i].y-ma111[i].y)/ma2x350[i].y)*100});
+    }
+    return piDps;
+  };
+
+
+  function MACD(dps,coeff) {
+    var cycle = [];
+
+    var ma1 = calculateEMA(dps, 12);
+    var ma2 = calculateEMA(dps, 26);
+
+    for(var i = 0; i < ma1.length; i++){
+      cycle.push({x: ma1[i].x, y: (ma1[i].y-ma2[i].y)*coeff});
+    }
+
+    return cycle;
+  };
+
+  function relative(ma1, ma2) {
+    var dps = [];
+
+    for(var i = 0; i < ma1.length; i++){
+      dps.push({x: ma1[i].x, y: ((ma2[i].y/ma1[i].y)-1)*100});
+    }
+    return dps;
+  };
+
+
+  function exit(piCycle, weight1, macd10Grayscale, weight2, goldenEMA, weight3, halving, weight4, whales, weight5, puell, weight6) {
+    var exit = [];
+
+    for(var i = 0; i < macd10Grayscale.length; i++){
+      exit.push({x: macd10Grayscale[i].x, y: ((piCycle[piCycle.length-macd10Grayscale.length+i].y*weight1) -(macd10Grayscale[i].y)*weight2 +(goldenEMA[goldenEMA.length-macd10Grayscale.length+i].y)*weight3 + halving[halving.length-macd10Grayscale.length+i].y*weight4 + (whales[whales.length-macd10Grayscale.length+i-1].y/10)*weight5 + puell[puell.length-macd10Grayscale.length+i-1].y*weight6)/(weight1+weight2+weight3+weight4+weight5+weight6) });
+    }
+
+    return exit;
+  };
+
+
+  //--------------
+  //DATA COLLECTION & PROCESSING
+  //--------------
+
+  var settingsPrice = {
+    "url": "https://api.coincap.io/v2/candles?exchange=poloniex&interval=d1&baseId=bitcoin&quoteId=tether",
+    "method": "GET",
+    "timeout": 0,
+  };
+
+
+  $.ajax(settingsPrice).done(function (response) {
+
+    for(var i = 0; i < response.data.length; i++){
+      price.push({x: new Date(response.data[i].period), y: [ Math.round(Number(response.data[i].open)),  Math.round(Number(response.data[i].high)),  Math.round(Number(response.data[i].low)),  Math.round(Number(response.data[i].close))]});
+      volume.push({x: new Date(response.data[i].period), y:  Math.round(Number(response.data[i].volume))});
+      close.push({x: new Date(response.data[i].period), y:  Math.round(Number(response.data[i].close))});
+
+      var halving = new Date('05/11/2020');
+      var day = new Date(response.data[i].period);
+
+      var diffTime = Math.abs(day - halving);
+      var diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      halvingCycleRisk.push({x: new Date(response.data[i].period), y: Number((diffDays+30) / 500)*100}); 
+
+    }
+
+    var settingsGrayscale = {
+      "url": "https://www.tokenview.com/v2api/grayscale?type=ophistory&coin=btc",
+      "method": "GET",
+      "contentType": 'application/json',
+    };
+
+    var grayscale = [];
+
+
+    $.ajax(settingsGrayscale).done(function (responseGrayscale) {
+
+      for(var i = 1; i < responseGrayscale.data.opList.length; i++){
+        var dayBuy = ((Number(responseGrayscale.data.opList[i]) - Number(responseGrayscale.data.opList[i-1]))/900)*100
+        grayscale.push({x: new Date(responseGrayscale.data.dateList[i]), y:  dayBuy});
+      }
+
+
+      var whales = [];
+      
+
+      var settingsWhales = {
+        "url": "https://tokenview.com/api/tx/unusual/count",
+        "method": "POST",
+        "contentType": 'application/json',
+        "Referer": "https://tokenview.com/en/largetxs/btc",
+        "data": '{"network":"btc","from":1514736000,"to":1610958900,"amount":100,"currency":"btc"}',
+      };
+
+
+      $.ajax(settingsWhales).done(function (responseWhales) {
+
+          for (var value in responseWhales.data){
+
+            for(var key in responseWhales.data[value]){
+              whales.push({x: new Date(key), y: responseWhales.data[value][key]});
+            }
+          }
+        
+
+        var settingsPuell = {
+          "url": "https://www.lookintobitcoin.com/django_plotly_dash/app/puell_multiple/_dash-layout",
+          "method": "GET",
+          "contentType": 'application/json',
+        };
+
+        var puell = [];
+
+
+        $.ajax(settingsPuell).done(function (responsePuell) {
+
+          var puellData = responsePuell.props.children[0].props.figure.data[1];
+
+          for(var i = 1; i < puellData.x.length-100; i++){
+            puell.push({x: new Date(puellData.x[i]), y:  Number(puellData.y[i]*20)});
+          }
+
+
+          stockChart.render();
+
+
+          stockChart.charts[1].addTo("data", {type: "spline", name: "#Whales", showInLegend: true, yValueFormatString: "#,###", dataPoints: whales});
+
+
+          stockChart.charts[1].addTo("data", {type: "column", name: "Grayscale (% of Daily BTC)", showInLegend: true, yValueFormatString: "#,###", dataPoints: grayscale});
+
+
+          var macd15Grayscale = MACD(grayscale,15);
+          stockChart.charts[1].addTo("data", {type: "spline", name: "MACDx15", showInLegend: true, yValueFormatString: "#,###", dataPoints: macd15Grayscale});
+
+          var ema200 = calculateEMA(price, 200);
+          stockChart.charts[0].addTo("data", {type: "line", name: "EMA200", showInLegend: true, yValueFormatString: "$#,###.##", dataPoints: ema200});
+
+          var ema50 = calculateEMA(price, 50);
+          stockChart.charts[0].addTo("data", {type: "line", name: "EMA50", showInLegend: true, yValueFormatString: "$#,###.##", dataPoints: ema50});
+
+          var piCycle = PiCycle(price);
+          stockChart.charts[2].addTo("data", {type: "line", name: "PiCycle", showInLegend: true, yValueFormatString: "#,###.##", dataPoints: piCycle});
+
+          var goldenEMA = relative(calculateEMA(price, 200), calculateEMA(price, 35));
+          stockChart.charts[2].addTo("data", {type: "line", name: "EMA ext", showInLegend: true, yValueFormatString: "#,###.##", dataPoints: goldenEMA});
+
+
+          stockChart.charts[2].addTo("data", {type: "line", name: "Puellx20", showInLegend: true, yValueFormatString: "#,###.##", dataPoints: puell});
+
+          var exitindicator = exit(piCycle, 2, MACD(grayscale,1.5), 0.8, goldenEMA, 1.5, halvingCycleRisk, 1.5, whales, 1, puell, 1.5);
+          stockChart.charts[2].addTo("data", {type: "spline", name: "Exit", showInLegend: true, yValueFormatString: "#,###.##", dataPoints: exitindicator});
+
+
+          //--------------
+          //KPI UPDATE
+          //--------------
+
+
+          document.getElementById("exit").innerHTML = precise(exitindicator[exitindicator.length-1].y);
+          document.getElementById("price").innerHTML = price[price.length-1].y[3];
+          document.getElementById("grayscale").innerHTML = precise(grayscale[grayscale.length-1].y);
+          document.getElementById("piCycle").innerHTML = precise(piCycle[piCycle.length-1].y);
+          document.getElementById("GoldenEMA").innerHTML = precise(goldenEMA[goldenEMA.length-1].y);
+          document.getElementById("halvingCycle").innerHTML = diffDays;
+          document.getElementById("whales").innerHTML = whales[whales.length-1].y;
+          document.getElementById("puell").innerHTML = precise(puell[puell.length-1].y/20);
+
+
+        });
+      });
+    });
+  });
+
+}
+</script>
+</head>
+<body>
+  <table style="width:100%; border: 1px solid black;">
+  <tr>
+    <th><b>Exit: <b><b id="exit"></b>%</th>
+    <th><b>Price: <b><b id="price"></b></th>
+    <th><b>Grayscale: <b><b id="grayscale"></b>% of daily BTC</th>
+    <th><b>Pi Cycle: <b><b id="piCycle"></b>%</th>
+    <th><b>EMA Ext: <b><b id="GoldenEMA"></b>%</th>
+  </tr>
+  <tr>
+    <th><b>Since Halving: <b><b id="halvingCycle"></b></th> 
+    <th><b>#Whales (>100btc): <b><b id="whales"></b></th>
+    <th><b>Google Trends: <b><b id="google"></b></th>
+    <th><b>Puell Multiple: <b><b id="puell"></b></th>
+    <th><b>Bollinger Ext: <b><b id="bollinger"></b></th>
+  </tr>
+  <tr>
+    <th><b>Fear & Greed: <b><b id="feargreed"></b></th> 
+    <th><b>Vs. Gold: <b><b id="gold"></b></th>
+    <th><b>#Tweets: <b><b id="twitter"></b></th>
+    <th><b>Exchanges I/O: <b><b id="exchanges"></b></th>
+    <th><b>Miners' Position Index: <b><b id="mpi"></b></th>
+  </tr>
+</table>
+<br/>
+<div id="chartContainer" style="height: 880px; width: 100%;"></div>
+</body>
+</html>
